@@ -5,6 +5,7 @@ import nachos.threads.*;
 import nachos.userprog.*;
 
 import java.io.EOFException;
+import java.util.Hashtable;
 
 /**
  * Encapsulates the state of a user process that is not contained in its
@@ -23,10 +24,12 @@ public class UserProcess {
      * Allocate a new process.
      */
     public UserProcess() {
-	int numPhysPages = Machine.processor().getNumPhysPages();
-	pageTable = new TranslationEntry[numPhysPages];
-	for (int i=0; i<numPhysPages; i++)
-	    pageTable[i] = new TranslationEntry(i,i, true,false,false,false);
+	    int numPhysPages = Machine.processor().getNumPhysPages();
+	    pageTable = new TranslationEntry[numPhysPages];
+        fd[0] =  UserKernel.console.openForReading();
+        fd[1] =  UserKernel.console.openForWriting();
+        for (int i=0; i<numPhysPages; i++)
+	       pageTable[i] = new TranslationEntry(i,i, true,false,false,false);
     }
     
     /**
@@ -346,9 +349,210 @@ public class UserProcess {
 	return 0;
     }
 
+	/**
+	 *  the code Luo Heng Add
+	 */
+	private int handleRead(int fileDescriptor, int buffer, int count){
+        if (fileDescriptor<0 || fileDescriptor > MaxNumberOfFilesCanBeOpen){
+            //System.out.println("aaaa");
+            return -1;
+        }
+        if (fd[fileDescriptor] == null ){
+           //System.out.println("bbbb");
+            return -1;
+        }
+        if (count<0) {
+           //System.out.println("cccc");
+            return -1;
+        }
+        OpenFile theFile= fd[fileDescriptor];
+        byte[] buf = new byte[maxLengthGiven];
+        int offset = 0;
+        int length = count;
+        int returnValue =  theFile.read(buf, offset, length);
+        writeVirtualMemory(buffer, buf);
+        return returnValue;
 
-    private static final int
-        syscallHalt = 0,
+
+    }
+    private int handleWrite(int fileDescriptor, int buffer, int count){
+        //System.out.print(fileDescriptor);
+        //System.out.println("aaaa");
+        if (fileDescriptor<0 || fileDescriptor > MaxNumberOfFilesCanBeOpen){
+            return -1;
+        }
+        if (fd[fileDescriptor] == null ){
+            return -1;
+        }
+        if (count<0) {
+            return -1;
+        }
+        OpenFile theFile= fd[fileDescriptor];
+        int pos=theFile.tell();
+        byte[] buf= new byte[maxLengthGiven];
+        int offset = 0;
+        int length = count;
+        readVirtualMemory(buffer, buf);
+        int returnValue =  theFile.write(buf, offset, length);
+        //System.out.println("aaaa");
+
+        return returnValue;
+
+    }
+    private int handleOpen(int name){
+        int len= maxLengthGiven;
+        String nameInFS = readVirtualMemoryString(name, len);
+        if (nameInFS == null) {
+            return -1;
+        }
+        //System.out.println(nameInFS);
+        System.out.print(nameInFS);
+        System.out.println(" open");
+        Integer v00 = fileStatus.get(nameInFS);
+        Boolean v01 = fileUnlinkStatus.get(nameInFS);
+        //System.out.println(v00);
+        //System.out.println(v01);
+        //System.out.println("counter and flag");
+        //System.out.println();
+        if (v01==null){
+            fileUnlinkStatus.put(nameInFS,false);
+        }else if(v01){
+            return -1;
+        }
+
+        if (v00 != null){
+            fileStatus.put(nameInFS,v00+1);
+        }else {
+            fileStatus.put(nameInFS,1);
+            fileUnlinkStatus.put(nameInFS,false);
+        }
+        OpenFile theFile= UserKernel.fileSystem.open(nameInFS, false);
+        int fileDescriptor=-1;
+        int flag =0;
+        for (int i=2 ;i<MaxNumberOfFilesCanBeOpen;i++){
+            if (fd[i] == null) {
+                fd[i] = theFile;
+                fileDescriptor = i;
+                flag = 1;
+                break;
+            }
+        }
+        if (flag == 0) {
+            return -1;
+        }
+        return fileDescriptor;
+    }
+    private int handleCreate(int name){
+        int len= maxLengthGiven;
+        String nameInFS = readVirtualMemoryString(name, len);
+
+        if (nameInFS == null) {
+            return -1;
+        }
+        System.out.print(nameInFS);
+        System.out.println(" created");
+        Integer v00 = fileStatus.get(nameInFS);
+        Boolean v01 = fileUnlinkStatus.get(nameInFS);
+        //System.out.println(v00);
+        //System.out.println(v01);
+        //System.out.println("counter and flag");
+        //System.out.println();
+        if (v01==null){
+            fileUnlinkStatus.put(nameInFS,false);
+        }else if(v01){
+            return -1;
+        }
+
+        if (v00 != null){
+            fileStatus.put(nameInFS,v00+1);
+        }else {
+            fileStatus.put(nameInFS,1);
+        }
+        OpenFile theFile= UserKernel.fileSystem.open(nameInFS, true);
+        int fileDescriptor=-1;
+        int flag =0;
+        for (int i=2 ;i<MaxNumberOfFilesCanBeOpen;i++){
+            if (fd[i] == null) {
+                fd[i] = theFile;
+                fileDescriptor = i;
+                flag = 1;
+                break;
+            }
+        }
+        if (flag == 0) {
+            return -1;
+        }
+        return fileDescriptor;
+    }
+    private int handleClose(int fileDescriptor){
+        if (fileDescriptor<0 || fileDescriptor > MaxNumberOfFilesCanBeOpen){
+            return -1;
+        }
+        if (fd[fileDescriptor] == null) {
+            return -1;
+        }
+        OpenFile theFile=fd[fileDescriptor];
+        System.out.print(theFile.getName());
+        System.out.println(" closed");
+
+        Integer v00 = fileStatus.get(theFile.getName());
+        Boolean v01 = fileUnlinkStatus.get(theFile.getName());
+        //System.out.println(v00);
+        //System.out.println(v01);
+        //System.out.println("counter and flag");
+        //System.out.println();
+        if (v00 != 1){
+            fileStatus.put(theFile.getName(),v00-1);
+        }else {
+            if (!v01) {
+                fileStatus.put(theFile.getName(), v00 - 1);
+                //System.out.println(fileStatus.get(theFile.getName()));
+            }else{
+                //System.out.println("get it");
+                String v02= theFile.getName();
+                theFile.close();
+                handleDelete(v02);
+                fd[fileDescriptor]=null;
+                return 0;
+            }
+
+        }
+        theFile.close();
+        fd[fileDescriptor]=null;
+        return 0;
+    }
+    private int handleDelete(String name){
+        System.out.print(name);
+        System.out.println(" deleted");
+        UserKernel.fileSystem.remove(name);
+        return 0;
+    }
+    private int handleUnlink(int name){
+
+        int len= maxLengthGiven;
+        int rvalue=0;
+        String nameInFS = readVirtualMemoryString(name, len);
+        Integer v00 = fileStatus.get(nameInFS);
+        Boolean v01 = fileUnlinkStatus.get(nameInFS);
+        System.out.print(nameInFS);
+        System.out.println(" wanted to be deleted");
+        //System.out.println(v00);
+        //System.out.println(v01);
+        //System.out.println("counter and flag");
+        //System.out.println();
+        if (v00 == 0) {
+            rvalue = handleDelete(nameInFS);
+            fileUnlinkStatus.put(nameInFS,false);
+        }else {
+            fileUnlinkStatus.put(nameInFS,true);
+        }
+        return rvalue;
+    }
+
+    /**
+     * Until here
+     */
+    private static final int syscallHalt = 0,
 	syscallExit = 1,
 	syscallExec = 2,
 	syscallJoin = 3,
@@ -388,16 +592,29 @@ public class UserProcess {
      * @return	the value to be returned to the user.
      */
     public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
-	switch (syscall) {
-	case syscallHalt:
-	    return handleHalt();
+        //System.out.print(syscall);
+        //System.out.println("syscall");
+        switch (syscall) {
+	        case syscallHalt:
+	            return handleHalt();
+            case syscallOpen:
+                return  handleOpen(a0);
+            case syscallCreate:
+                return  handleCreate(a0);
+            case syscallRead:
+                return  handleRead(a0, a1, a2);
+            case syscallWrite:
+                return  handleWrite(a0, a1, a2);
+            case syscallClose:
+                return  handleClose(a0);
+            case syscallUnlink:
+                return  handleUnlink(a0);
 
-
-	default:
-	    Lib.debug(dbgProcess, "Unknown syscall " + syscall);
-	    Lib.assertNotReached("Unknown system call!");
-	}
-	return 0;
+	        default:
+	            Lib.debug(dbgProcess, "Unknown syscall " + syscall);
+	            Lib.assertNotReached("Unknown system call!");
+	    }
+	    return 0;
     }
 
     /**
@@ -410,7 +627,7 @@ public class UserProcess {
      */
     public void handleException(int cause) {
 	Processor processor = Machine.processor();
-
+        //System.out.print(cause);
 	switch (cause) {
 	case Processor.exceptionSyscall:
 	    int result = handleSyscall(processor.readRegister(Processor.regV0),
@@ -429,7 +646,15 @@ public class UserProcess {
 	    Lib.assertNotReached("Unexpected exception");
 	}
     }
+    /**
+     * add by Luo Heng
+     */
+    protected int MaxNumberOfFilesCanBeOpen=16;
+    protected OpenFile[] fd = new OpenFile[MaxNumberOfFilesCanBeOpen];
 
+    protected int maxLengthGiven = 256;
+    public static Hashtable<String,Integer>fileStatus=new Hashtable<String,Integer>(); //taa
+    public static Hashtable<String,Boolean>fileUnlinkStatus=new Hashtable<String,Boolean>(); //taa
     /** The program being run by this process. */
     protected Coff coff;
 
